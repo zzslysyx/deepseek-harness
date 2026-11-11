@@ -9,6 +9,7 @@ import {
   claudeDistributionFromManifest,
   collectPythonDependencies,
   collectBundledPythonDependencies,
+  installedPackageName,
   isOwnerAuthorizedRuntime,
   isPermissive,
   type Manifest,
@@ -143,6 +144,28 @@ describe('tierExternalDeps', () => {
     const { manifests, names } = workspace({})
     expect(() => tierExternalDeps(manifests, names, new Set(['missing-lib'])))
       .toThrow('browser package missing-lib has no workspace dependency declaration')
+  })
+
+  it('discloses the installed package an npm alias installs, not the declaring key', () => {
+    const { manifests, names } = workspace({
+      'packages/client/ui/package.json': {
+        name: '@fixture/ui', devDependencies: { 'aliased-zip': 'npm:@scope/pkg@0.20.3' },
+      },
+    })
+    const tiers = tierExternalDeps(manifests, names, new Set(['@scope/pkg']))
+    expect(tiers.get('@scope/pkg')).toBe(true)
+    expect(tiers.has('aliased-zip')).toBe(false)
+  })
+
+  it('reads the package identity out of every alias form and rejects a nameless one', () => {
+    expect(installedPackageName('xlsx', 'npm:@oleg_tarasov/sheetjs-ce@0.20.3')).toBe('@oleg_tarasov/sheetjs-ce')
+    expect(installedPackageName('xlsx', 'npm:@oleg_tarasov/sheetjs-ce')).toBe('@oleg_tarasov/sheetjs-ce')
+    expect(installedPackageName('zip', 'npm:zip-lib@^1.2.0')).toBe('zip-lib')
+    expect(installedPackageName('zip', '^1.2.0')).toBe('zip')
+    for (const specifier of ['npm:', 'npm:@scope/', 'npm:zip-lib@']) {
+      expect(() => installedPackageName('zip', specifier))
+        .toThrow('cannot read a package name from the aliased dependency zip')
+    }
   })
 
   it('tiers by declaring area, not by the declaring section name', () => {

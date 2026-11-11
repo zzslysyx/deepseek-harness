@@ -414,6 +414,28 @@ function collectNpmDeps(manifests: Map<string, Manifest>, names: Set<string>, br
 }
 
 /**
+ * Read the installed package identity behind one dependency declaration.
+ *
+ * An `npm:` alias installs its target package under the declaring key, so the
+ * key names the dependency edge while `node_modules` holds the target's own
+ * name; disclosure and browser-bundle matching both follow the installed name.
+ * @param dependency - the dependency key as the declaring manifest writes it.
+ * @param specifier - the declared version range or alias specifier.
+ * @returns the package identity present under `node_modules`.
+ * @throws When an `npm:` specifier does not name a package.
+ */
+export function installedPackageName(dependency: string, specifier: string): string {
+  if (!specifier.startsWith('npm:')) return dependency
+  const target = specifier.slice('npm:'.length)
+  const name = /^(?:@[^/@]+\/)?[^/@]+/.exec(target)?.[0]
+  const rest = target.slice(name?.length ?? 0)
+  if (name === undefined || (rest !== '' && !/^@.+$/.test(rest))) {
+    throw new Error(`gen-third-party-notices: cannot read a package name from the aliased dependency ${dependency} (${specifier}).`)
+  }
+  return name
+}
+
+/**
  * Tier every external dependency the workspace declares, including named Host embeddings.
  * @param manifests - workspace manifests keyed by repository-relative path.
  * @param names - every workspace package name, which never counts as external.
@@ -436,10 +458,11 @@ export function tierExternalDeps(
     }
     for (const kind of ALL_KINDS) {
       for (const [dep, range] of Object.entries(manifest[kind] ?? {})) {
-        if (names.has(dep) || range.startsWith('workspace:')) continue
-        const runtime = browser.has(dep) || hostBundled.includes(dep)
+        const installed = installedPackageName(dep, range)
+        if (names.has(installed) || range.startsWith('workspace:')) continue
+        const runtime = browser.has(installed) || hostBundled.includes(dep)
           || !devOnly && (RUNTIME_KINDS as readonly string[]).includes(kind)
-        tiers.set(dep, (tiers.get(dep) ?? false) || runtime)
+        tiers.set(installed, (tiers.get(installed) ?? false) || runtime)
       }
     }
   }

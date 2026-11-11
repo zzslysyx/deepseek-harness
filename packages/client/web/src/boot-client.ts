@@ -53,7 +53,7 @@ export async function bootClient(options: ClientBootOptions): Promise<void> {
   }
 
   await loader.await()
-  assertEntriesActive(ctx, options.modules)
+  await assertEntriesActive(ctx, options.modules)
 }
 
 /**
@@ -61,9 +61,11 @@ export async function bootClient(options: ClientBootOptions): Promise<void> {
  * @param ctx - root Context carrying the Loader.
  * @param modules - the module system whose recorded import failures name why an entry
  *   has no fiber; a row with no record points at the console.
- * @throws {Error} listing every non-active entry with its reason.
+ * @returns resolves once every entry is active.
+ * @throws {Error} rejects with a report listing every non-active entry and its reason;
+ *   a failed entry contributes the startup error its fiber rethrows.
  */
-export function assertEntriesActive(ctx: Context, modules: Pick<ClientModuleLoader, 'importError'>): void {
+export async function assertEntriesActive(ctx: Context, modules: Pick<ClientModuleLoader, 'importError'>): Promise<void> {
   const failures: string[] = []
   for (const entry of ctx.loader.entries()) {
     const name = entry.options.name
@@ -79,6 +81,16 @@ export function assertEntriesActive(ctx: Context, modules: Pick<ClientModuleLoad
     if (state === 'pending') {
       const missing = Object.keys(entry.fiber.inject).filter(service => ctx.get(service) === undefined)
       failures.push(`${name}: pending (waiting for service${missing.length === 1 ? '' : 's'}: ${missing.join(', ') || 'unknown'})`)
+    } else if (state === 'failed') {
+      // Recover the plugin-startup error so the boot diagnostic names the real
+      // reason instead of the bare "failed" label (fiber.await() rethrows it).
+      try {
+        await entry.fiber.await()
+        failures.push(`${name}: ${state} (no error recovered)`)
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        failures.push(`${name}: failed: ${detail}`)
+      }
     } else {
       failures.push(`${name}: ${state}`)
     }
